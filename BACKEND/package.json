@@ -5,6 +5,7 @@
   "main": "index.ts",
   "scripts": {
     "start": "tsx index.ts",
+    "dev": "tsx watch index.ts",
     "ingest": "tsx src/services/IngestionService.ts",
     "build": "tsc",
     "type-check": "tsc --noEmit",
@@ -12,12 +13,15 @@
     "lint:fix": "eslint *.ts src/**/*.ts --fix"
   },
   "dependencies": {
+    "@azure/storage-blob": "^12.29.1",
     "body-parser": "^2.2.1",
     "chromadb": "^1.8.1",
     "cors": "^2.8.5",
     "express": "^5.2.1",
+    "mongoose": "^9.0.2",
     "multer": "^2.0.2",
     "ollama": "^0.5.0",
+    "pdf-parse": "^2.4.5",
     "readline-sync": "^1.4.10"
   },
   "devDependencies": {
@@ -27,6 +31,7 @@
     "@types/express": "^5.0.6",
     "@types/multer": "^2.0.0",
     "@types/node": "^25.0.1",
+    "@types/pdf-parse": "^1.1.5",
     "@types/readline-sync": "^1.4.8",
     "@typescript-eslint/eslint-plugin": "^8.49.0",
     "@typescript-eslint/parser": "^8.49.0",

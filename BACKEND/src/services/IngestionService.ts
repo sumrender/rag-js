@@ -1,18 +1,18 @@
-import fs from "fs";
-import { fileURLToPath } from "url";
-import path from "path";
 import crypto from "crypto";
+import { PDFParse } from "pdf-parse";
 import { OllamaService } from "./OllamaService.js";
 import { ChromaService } from "./ChromaService.js";
 import { Config } from "../config/Config.js";
 import { ResultCodes } from "../utils/ResultCodes.js";
 import { FileRepository } from "../repositories/FileRepository.js";
+import { BlobStorageService } from "./BlobStorageService.js";
 
 export class IngestionService {
   constructor(
     private ollamaService: OllamaService,
     private chromaService: ChromaService,
     private config: Config,
+    private blobStorageService: BlobStorageService,
     private fileRepository: FileRepository = new FileRepository()
   ) {}
 
@@ -50,7 +50,7 @@ export class IngestionService {
   }
 
   async ingest(
-    filePath: string = "./data/YouTube.txt",
+    blobName: string,
     onProgress?: (info: {
       stage: 'clearing' | 'chunking' | 'embedding' | 'complete';
       current?: number;
@@ -61,22 +61,42 @@ export class IngestionService {
   ): Promise<void> {
     const collection = await this.chromaService.getCollection();
     
-    const text = fs.readFileSync(filePath, "utf-8");
+    // Determine file type from blob name
+    const fileExtension = blobName.split('.').pop()?.toLowerCase();
+    const fileType = fileExtension === 'pdf' ? 'pdf' : 'txt';
+    
+    let text: string;
+    
+    if (fileType === 'pdf') {
+      // Download as buffer and parse PDF
+      const buffer = await this.blobStorageService.downloadBuffer(blobName);
+      const parser = new PDFParse({ data: buffer });
+      try {
+        const result = await parser.getText();
+        text = result.text;
+      } finally {
+        await parser.destroy();
+      }
+    } else {
+      // Download as text
+      text = await this.blobStorageService.download(blobName);
+    }
+    
     const chunks = this.chunkText(text, this.config.chunking.chunkSize, this.config.chunking.chunkOverlap);
     
     // Generate File Metadata
     const fileId = crypto.randomUUID();
-    const fileName = path.basename(filePath);
+    const fileName = blobName;
     const fileMetadata = {
       id: fileId,
       name: fileName,
-      type: path.extname(filePath).slice(1), // remove dot
+      type: fileType,
       createdOn: new Date().toISOString(),
-      path: filePath
+      path: blobName
     };
 
     // Save metadata
-    this.fileRepository.save(fileMetadata);
+    await this.fileRepository.save(fileMetadata);
     console.log(`Registered file ${fileName} with ID ${fileId}`);
 
     console.log(`Ingesting ${chunks.length} chunks...`);
@@ -121,19 +141,3 @@ export class IngestionService {
     });
   }
 }
-
-// Allow running as script
-const __filename = fileURLToPath(import.meta.url);
-if (process.argv[1] === __filename) {
-  const config = new Config();
-  const ollamaService = new OllamaService(config);
-  const chromaService = new ChromaService(config);
-  const ingestionService = new IngestionService(ollamaService, chromaService, config);
-  
-  const filePath = process.argv[2] ?? "./data/YouTube.txt";
-  ingestionService.ingest(filePath).catch((error: unknown) => {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(errorMessage);
-  });
-}
-

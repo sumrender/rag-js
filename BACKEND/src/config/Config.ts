@@ -1,10 +1,11 @@
-import { OllamaConfig, ChromaConfig, ChunkingConfig, RetrievalConfig } from "../models/index.js";
+import { OllamaConfig, ChromaConfig, ChunkingConfig, RetrievalConfig, AzureConfig } from "../models/index.js";
 
 export class Config {
   public readonly ollama: OllamaConfig;
   public readonly chroma: ChromaConfig;
   public readonly chunking: ChunkingConfig;
   public readonly retrieval: RetrievalConfig;
+  public readonly azure: AzureConfig;
 
   constructor() {
     this.ollama = {
@@ -22,6 +23,10 @@ export class Config {
     };
     this.retrieval = {
       nResults: 3           // number of chunks to retrieve
+    };
+    this.azure = {
+      connectionString: process.env.AZURE_STORAGE_CONNECTION_STRING ?? "UseDevelopmentStorage=true",
+      containerName: process.env.AZURE_STORAGE_CONTAINER ?? "documents"
     };
   }
 }

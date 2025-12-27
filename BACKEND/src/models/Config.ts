@@ -25,3 +25,7 @@ export interface AppConfig {
   retrieval: RetrievalConfig;
 }
 
+export interface AzureConfig {
+  connectionString: string;
+  containerName: string;
+}

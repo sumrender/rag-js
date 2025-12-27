@@ -65,8 +65,8 @@ export class FileUploadComponent {
     this.progressMessage = '';
 
     // Validate file type
-    if (!file.name.endsWith('.txt')) {
-      this.errorMessage = 'Only .txt files are allowed';
+    if (!file.name.endsWith('.txt') && !file.name.endsWith('.pdf')) {
+      this.errorMessage = 'Only .txt and .pdf files are allowed';
       this.selectedFile = null;
       return;
     }
