@@ -76,7 +76,6 @@ export class RedisCacheService {
 
       if (results.total > 0 && results.documents.length > 0) {
         const doc = results.documents[0];
-        console.log("Redis Fuzzy Search Doc:", doc.value);
 
         const question = doc.value.question || doc.value['$.question'];
         const answer = doc.value.answer || doc.value['$.answer'];
@@ -85,11 +84,11 @@ export class RedisCacheService {
         console.log(`🔎 Fuzzy Match found. Score: ${score}, Question: "${question}"`);
 
         // Cosine distance: 0 is identical, 1 is opposite.
-        // Relaxing threshold to 0.4 (Similarity > 0.6) for better fuzzy matching of short text
-        if (score < 0.4) {
+        // Tightening threshold to 0.2 (Similarity > 0.8) to avoid false positives
+        if (score < 0.3) {
           return answer as string;
         } else {
-          console.log(`⚠️ Match found but score ${score} is >= 0.4 (Limit)`);
+          console.log(`⚠️ Match found but score ${score} is >= 0.3 (Limit)`);
         }
       } else {
         console.log("⚠️ No fuzzy match found in Redis");
@@ -108,7 +107,7 @@ export class RedisCacheService {
       answer,
       embedding: embedding
     });
-    // Set 24h expiry
+
     await this.client.expire(key, 60 * 60 * 24);
   }
 }
