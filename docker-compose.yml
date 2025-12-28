@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    entrypoint: >
+      /bin/sh -c "
+        ollama serve & 
+        sleep 3;
+        if ! ollama list | grep -q 'mxbai-embed-large'; then 
+          echo '📥 Pulling mxbai-embed-large...'; 
+          ollama pull mxbai-embed-large; 
+        else 
+          echo '✔ mxbai-embed-large already present'; 
+        fi;
+        if ! ollama list | grep -q 'gemma3'; then 
+          echo '📥 Pulling gemma3...'; 
+          ollama pull gemma3; 
+        else 
+          echo '✔ gemma3 already present'; 
+        fi;
+        echo '🚀 Ollama Ready';
+        tail -f /dev/null
+      "
+
+  redis:
+    image: redis/redis-stack:latest
+    container_name: redis-vector
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  redis-insight:
+    image: redis/redisinsight:latest
+    container_name: redis-insight
+    restart: unless-stopped
+    ports:
+      - "5540:5540"
+    volumes:
+      - redis_insight_data:/data
+    depends_on:
+      - redis
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: chromadb
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - CHROMA_DB_DIR=/chroma
+
+volumes:
+  ollama_data:
+  redis_data:
+  redis_insight_data:
+  chroma_data:
