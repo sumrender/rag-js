@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# docker compose down --volumes
+# To remove the volumes and start fresh
+
 # Function to kill processes on exit
 cleanup() {
     echo ""

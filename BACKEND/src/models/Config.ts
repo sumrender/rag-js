@@ -16,6 +16,12 @@ export interface ChunkingConfig {
 
 export interface RetrievalConfig {
   nResults: number;
+  summaryQueryKeywords?: string[];
+  pageQueryPatterns?: RegExp[];
+  sourceQueryKeywords?: string[];
+  includeCitations?: boolean;
+  nResultsForPageQueries?: number;
+  nResultsForSummaryQueries?: number;
 }
 
 export interface AppConfig {

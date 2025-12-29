@@ -17,7 +17,7 @@ export interface FileUploadResponse {
 }
 
 export interface UploadProgressEvent {
-  stage: 'start' | 'clearing' | 'chunking' | 'embedding' | 'complete' | 'error';
+  stage: 'start' | 'uploading' | 'uploaded' | 'chunking' | 'summarizing' | 'embedding' | 'complete' | 'error';
   current?: number;
   total?: number;
   message: string;
