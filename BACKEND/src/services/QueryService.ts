@@ -1,7 +1,7 @@
 import { OllamaService } from "./OllamaService.js";
-import { ChromaService } from "./ChromaService.js";
 import { Config } from "../config/Config.js";
 import { ResultCodes } from "../utils/ResultCodes.js";
+import { PythonServiceClient } from "./PythonServiceClient.js";
 
 type QueryType = 'summary' | 'page' | 'source' | 'detail';
 
@@ -13,8 +13,8 @@ interface QueryAnalysis {
 export class QueryService {
   constructor(
     private ollamaService: OllamaService,
-    private chromaService: ChromaService,
-    private config: Config
+    private config: Config,
+    private pythonServiceClient: PythonServiceClient
   ) {}
 
   private detectQueryType(question: string): QueryAnalysis {
@@ -49,19 +49,18 @@ export class QueryService {
   }
 
   async ask(question: string): Promise<string> {
-    const collection = await this.chromaService.getCollection();
-    const queryEmbedding = await this.ollamaService.embed(question);
+    // Use Python service for retrieval
+    const retrievalResult = await this.pythonServiceClient.retrieveText(
+      question,
+      undefined,
+      this.config.retrieval.nResults
+    );
     
-    const results = await collection.query({
-      queryEmbeddings: [queryEmbedding],
-      nResults: this.config.retrieval.nResults
-    });
-    
-    if (results.documents === undefined || results.documents.length === 0 || results.documents[0] === undefined || results.documents[0].length === 0) {
+    if (!retrievalResult.chunks || retrievalResult.chunks.length === 0) {
       throw new Error(ResultCodes.NO_RELEVANT_DOCUMENTS);
     }
     
-    const context = results.documents[0].join("\n\n---\n\n");
+    const context = retrievalResult.chunks.map(chunk => chunk.text).join("\n\n---\n\n");
     
     const prompt = `
 Use the following context to answer the question. If the context doesn't contain enough information, say so.
@@ -134,176 +133,91 @@ Answer:
     }
     const question = lastUserMessage.content;
 
-    const collection = await this.chromaService.getCollection();
     const queryAnalysis = this.detectQueryType(question);
-    const queryEmbedding = await this.ollamaService.embed(question);
-    
-    let results: any;
     let context = "";
     let retrievedMetadata: Array<Record<string, any>> | undefined;
+    let imageResults: any[] = [];
     
-    // Build base query options - not needed anymore, handled per query type
-    
-    // Handle different query types
-    if (queryAnalysis.type === 'summary') {
-      // For summary queries, prioritize summaries
-      const summaryQueryOptions: {
-        queryEmbeddings: number[][];
-        nResults: number;
-        where?: Record<string, any>;
-      } = {
-        queryEmbeddings: [queryEmbedding],
-        nResults: this.config.retrieval.nResultsForSummaryQueries || 1
-      };
+    // Use Python service for text retrieval
+    try {
+      let k = this.config.retrieval.nResults;
       
-      // Build summary where clause with proper ChromaDB syntax
-      let summaryWhere: Record<string, any>;
-      if (fileId !== undefined && fileId !== null && fileId !== '') {
-        summaryWhere = {
-          $and: [
-            { contentType: { $eq: "summary" } },
-            { fileId: { $eq: fileId } }
-          ]
-        };
+      if (queryAnalysis.type === 'summary') {
+        // For summary queries, get more results to find summaries
+        k = Math.max(this.config.retrieval.nResultsForSummaryQueries || 5, this.config.retrieval.nResults || 3);
+      } else if (queryAnalysis.type === 'page' && queryAnalysis.pageNumber) {
+        // For page queries, get more results to filter by page
+        k = Math.max(20, (this.config.retrieval.nResultsForPageQueries || 10) * 2);
+      }
+      
+      const retrievalResult = await this.pythonServiceClient.retrieveText(
+        question,
+        fileId,
+        k
+      );
+      
+      // Filter by query type
+      if (queryAnalysis.type === 'summary') {
+        // Prioritize summaries, then chunks
+        const summaryChunks = retrievalResult.chunks.filter(c => c.metadata?.contentType === 'summary');
+        const regularChunks = retrievalResult.chunks.filter(c => c.metadata?.contentType === 'chunk');
+        const allChunks = [...summaryChunks, ...regularChunks].slice(0, this.config.retrieval.nResultsForSummaryQueries || 5);
+        
+        context = this.formatContextWithCitations(
+          allChunks.map(c => c.text),
+          allChunks.map(c => c.metadata)
+        );
+        retrievedMetadata = allChunks.map(c => c.metadata);
+      } else if (queryAnalysis.type === 'page' && queryAnalysis.pageNumber) {
+        // Filter by page number
+        const pageNum = queryAnalysis.pageNumber;
+        const pageNumStr = pageNum.toString();
+        const filteredChunks = retrievalResult.chunks.filter(chunk => {
+          const meta = chunk.metadata || {};
+          return meta.pageNumber === pageNumStr ||
+                 (meta.pageRange && meta.pageRange.includes(pageNumStr)) ||
+                 (meta.pageRange && this.pageInRange(meta.pageRange, pageNum));
+        });
+        
+        const chunksToUse = filteredChunks.length > 0 
+          ? filteredChunks.slice(0, this.config.retrieval.nResultsForPageQueries || 10)
+          : retrievalResult.chunks.slice(0, this.config.retrieval.nResultsForPageQueries || 10);
+        
+        context = this.formatContextWithCitations(
+          chunksToUse.map(c => c.text),
+          chunksToUse.map(c => c.metadata)
+        );
+        retrievedMetadata = chunksToUse.map(c => c.metadata);
       } else {
-        summaryWhere = {
-          contentType: { $eq: "summary" }
-        };
+        // Standard retrieval
+        const chunksToUse = retrievalResult.chunks.slice(0, this.config.retrieval.nResults);
+        context = this.formatContextWithCitations(
+          chunksToUse.map(c => c.text),
+          chunksToUse.map(c => c.metadata)
+        );
+        retrievedMetadata = chunksToUse.map(c => c.metadata);
       }
-      summaryQueryOptions.where = summaryWhere;
       
-      const summaryResults = await collection.query(summaryQueryOptions);
+      // Optionally retrieve images by text (heuristic: keywords like "painting", "diagram", "image")
+      const imageKeywords = ['painting', 'diagram', 'image', 'picture', 'figure', 'chart', 'graph', 'show me'];
+      const shouldRetrieveImages = imageKeywords.some(keyword => question.toLowerCase().includes(keyword));
       
-      // Also get some chunks for additional context
-      const chunkQueryOptions: {
-        queryEmbeddings: number[][];
-        nResults: number;
-        where?: Record<string, any>;
-      } = {
-        queryEmbeddings: [queryEmbedding],
-        nResults: this.config.retrieval.nResults || 3
-      };
-      
-      // Build chunk where clause with proper ChromaDB syntax
-      let chunkWhere: Record<string, any>;
-      if (fileId !== undefined && fileId !== null && fileId !== '') {
-        chunkWhere = {
-          $and: [
-            { contentType: { $eq: "chunk" } },
-            { fileId: { $eq: fileId } }
-          ]
-        };
-      } else {
-        chunkWhere = {
-          contentType: { $eq: "chunk" }
-        };
-      }
-      chunkQueryOptions.where = chunkWhere;
-      
-      const chunkResults = await collection.query(chunkQueryOptions);
-      
-      // Combine results: summaries first, then chunks
-      const summaryDocs = (summaryResults.documents?.[0] || []).filter((doc): doc is string => doc !== null);
-      const summaryMetas = (summaryResults.metadatas?.[0] || []).filter((meta): meta is Record<string, any> => meta !== null);
-      const chunkDocs = (chunkResults.documents?.[0] || []).filter((doc): doc is string => doc !== null);
-      const chunkMetas = (chunkResults.metadatas?.[0] || []).filter((meta): meta is Record<string, any> => meta !== null);
-      
-      const allDocs: string[] = [...summaryDocs, ...chunkDocs];
-      const allMetas: Array<Record<string, any>> = [...summaryMetas, ...chunkMetas];
-      
-      context = this.formatContextWithCitations(allDocs, allMetas);
-      retrievedMetadata = allMetas;
-      
-    } else if (queryAnalysis.type === 'page' && queryAnalysis.pageNumber) {
-      // For page queries, query more results and filter by page number in memory
-      // ChromaDB's where clause doesn't support complex queries like $or or $contains
-      const pageNum = queryAnalysis.pageNumber;
-      const pageNumStr = pageNum.toString();
-      
-      // Query more results to ensure we get page-specific content
-      const queryOptions: {
-        queryEmbeddings: number[][];
-        nResults: number;
-        where?: Record<string, any>;
-      } = {
-        queryEmbeddings: [queryEmbedding],
-        nResults: Math.max(20, (this.config.retrieval.nResultsForPageQueries || 10) * 2)
-      };
-
-      if (fileId !== undefined && fileId !== null && fileId !== '') {
-        queryOptions.where = { fileId: { $eq: fileId } };
-      }
-
-      results = await collection.query(queryOptions);
-      
-      // Filter results by page number
-      if (results.documents?.length > 0 && results.documents[0]?.length > 0) {
-        const filteredDocs: string[] = [];
-        const filteredMetas: Record<string, any>[] = [];
-        const filteredIds: string[] = [];
-        const filteredDistances: number[] = [];
-        
-        const docs = results.documents[0];
-        const metas = results.metadatas?.[0] || [];
-        const ids = results.ids?.[0] || [];
-        const distances = results.distances?.[0] || [];
-        
-        for (let i = 0; i < docs.length; i++) {
-          const meta = metas[i] || {};
-          const matchesPage = 
-            meta.pageNumber === pageNumStr ||
-            (meta.pageRange && meta.pageRange.includes(pageNumStr)) ||
-            (meta.pageRange && this.pageInRange(meta.pageRange, pageNum));
-          
-          if (matchesPage) {
-            filteredDocs.push(docs[i]);
-            filteredMetas.push(meta);
-            if (ids[i]) filteredIds.push(ids[i]);
-            if (distances[i] !== undefined) filteredDistances.push(distances[i]);
-          }
-        }
-        
-        // If we found page-specific results, use them; otherwise use top results
-        if (filteredDocs.length > 0) {
-          // Limit to requested number
-          const limit = this.config.retrieval.nResultsForPageQueries || 10;
-          context = this.formatContextWithCitations(
-            filteredDocs.slice(0, limit),
-            filteredMetas.slice(0, limit)
+      if (shouldRetrieveImages) {
+        try {
+          const imageRetrievalResult = await this.pythonServiceClient.retrieveImagesByText(
+            question,
+            fileId,
+            this.config.retrieval.nResults || 3
           );
-          retrievedMetadata = filteredMetas.slice(0, limit);
-        } else {
-          // Fallback to top results if no page match found
-          const limit = this.config.retrieval.nResultsForPageQueries || 10;
-          context = this.formatContextWithCitations(
-            docs.slice(0, limit),
-            metas.slice(0, limit)
-          );
-          retrievedMetadata = metas.slice(0, limit);
+          imageResults = imageRetrievalResult.images || [];
+        } catch (error) {
+          // Non-fatal: log but continue
+          console.warn("Image retrieval failed (non-fatal):", error);
         }
       }
-      
-    } else {
-      // For detail and source queries, use standard retrieval
-      const queryOptions: {
-        queryEmbeddings: number[][];
-        nResults: number;
-        where?: Record<string, any>;
-      } = {
-        queryEmbeddings: [queryEmbedding],
-        nResults: this.config.retrieval.nResults
-      };
-
-      if (fileId !== undefined && fileId !== null && fileId !== '') {
-        queryOptions.where = { fileId: { $eq: fileId } };
-      }
-
-      results = await collection.query(queryOptions);
-      
-      if (results.documents?.length > 0 && results.documents[0]?.length > 0) {
-        context = this.formatContextWithCitations(results.documents[0], results.metadatas?.[0]);
-        retrievedMetadata = results.metadatas?.[0];
-      }
+    } catch (error) {
+      console.error("Retrieval failed:", error);
+      throw error;
     }
     
     // Build system prompt with citation instructions
@@ -321,6 +235,11 @@ If asked about sources or references, explicitly list the page numbers you used.
     }
 
     systemPrompt += `\n\nContext:\n${context}`;
+    
+    // Add image context if available
+    if (imageResults.length > 0) {
+      systemPrompt += `\n\nRelevant images found: ${imageResults.length} image(s) related to the query.`;
+    }
     
     // Create new messages array with system prompt at the start
     const messages = [

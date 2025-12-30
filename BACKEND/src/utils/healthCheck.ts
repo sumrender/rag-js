@@ -5,14 +5,10 @@ export async function healthCheck(): Promise<void> {
   if (!ollamaResponse.ok) {
     throw new Error("Ollama is not running");
   }
-  const chromaResponse = await fetch("http://localhost:8000/api/v2/heartbeat");
-  if (!chromaResponse.ok) {
-    throw new Error("Chroma is not running");
-  }
   const dbConnected = await checkDbConnection();
   if (!dbConnected) {
     throw new Error("MongoDB is not connected");
   }
-  console.log("Ollama, Chroma, and MongoDB are running");
+  console.log("Ollama and MongoDB are running");
 }
 

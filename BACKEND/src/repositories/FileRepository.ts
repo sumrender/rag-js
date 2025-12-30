@@ -13,7 +13,12 @@ export class FileRepository {
       name: doc.name,
       type: doc.type,
       createdOn: doc.createdOn,
-      path: doc.path
+      path: doc.path,
+      file_url: doc.file_url,
+      readyForChatting: doc.readyForChatting,
+      ingestionStage: doc.ingestionStage,
+      lastError: doc.lastError,
+      imageCount: doc.imageCount
     }));
   }
 
@@ -25,7 +30,16 @@ export class FileRepository {
       name: doc.name,
       type: doc.type,
       createdOn: doc.createdOn,
-      path: doc.path
+      path: doc.path,
+      file_url: doc.file_url,
+      readyForChatting: doc.readyForChatting,
+      ingestionStage: doc.ingestionStage,
+      lastError: doc.lastError,
+      imageCount: doc.imageCount
     };
+  }
+
+  async updateById(id: string, updates: Partial<FileMetadata>): Promise<void> {
+    await FileMetadataModel.updateOne({ id }, { $set: updates });
   }
 }

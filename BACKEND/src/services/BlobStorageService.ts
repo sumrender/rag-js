@@ -32,6 +32,12 @@ export class BlobStorageService {
     return blockBlobClient.name;
   }
 
+  async getFileUrl(fileName: string): Promise<string> {
+    await this.ensureContainerExists();
+    const blockBlobClient = this.containerClient.getBlockBlobClient(fileName);
+    return blockBlobClient.url;
+  }
+
   async download(fileName: string): Promise<string> {
     await this.ensureContainerExists();
     const blockBlobClient = this.containerClient.getBlockBlobClient(fileName);

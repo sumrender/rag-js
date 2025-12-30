@@ -5,7 +5,6 @@ export interface UploadValidationResult {
 }
 
 export interface ServiceAvailability {
-  ingestService: boolean;
   blobStorageService: boolean;
 }
 

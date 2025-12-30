@@ -24,4 +24,7 @@ ollama pull mxbai-embed-large
 ```
 
 ###
-Once ollama is running locally, just use `./start.sh` script to start the application
+Once ollama is running locally.
+do `docker compose up`, then run scripts from `scripts` folder
+1. Run `./start.sh` in root directory
+2. Run

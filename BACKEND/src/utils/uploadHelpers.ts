@@ -15,10 +15,6 @@ export function validateUploadRequest(
     return null;
   }
 
-  if (!serviceAvailability.ingestService) {
-    res.status(503).json({ error: "ingestService not ready yet" });
-    return null;
-  }
   if (!serviceAvailability.blobStorageService) {
     res.status(503).json({ error: "blobStorageService not ready yet" });
     return null;

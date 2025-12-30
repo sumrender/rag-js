@@ -8,7 +8,12 @@ const FileMetadataSchema: Schema = new Schema({
   name: { type: String, required: true },
   type: { type: String, required: true },
   createdOn: { type: String, required: true },
-  path: { type: String, required: true }
+  path: { type: String, required: true },
+  file_url: { type: String },
+  readyForChatting: { type: Boolean, default: false },
+  ingestionStage: { type: String },
+  lastError: { type: String },
+  imageCount: { type: Number }
 }, {
     timestamps: true
 });

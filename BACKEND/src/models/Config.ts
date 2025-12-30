@@ -4,11 +4,6 @@ export interface OllamaConfig {
   llmModel: string;
 }
 
-export interface ChromaConfig {
-  url: string;
-  collectionName: string;
-}
-
 export interface ChunkingConfig {
   chunkSize: number;
   chunkOverlap: number;
@@ -26,7 +21,6 @@ export interface RetrievalConfig {
 
 export interface AppConfig {
   ollama: OllamaConfig;
-  chroma: ChromaConfig;
   chunking: ChunkingConfig;
   retrieval: RetrievalConfig;
 }
@@ -34,4 +28,8 @@ export interface AppConfig {
 export interface AzureConfig {
   connectionString: string;
   containerName: string;
+}
+
+export interface PythonServiceConfig {
+  url: string;
 }
