@@ -2,6 +2,12 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  images?: Array<{
+    imageId: string;
+    imageUrl: string;
+    pageNumber?: number;
+    score: number;
+  }>;
 }
 
 export interface ChatResponse {

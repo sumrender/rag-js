@@ -217,7 +217,11 @@ class FAISSStore:
             if "$eq" in condition:
                 if metadata[key] != condition["$eq"]:
                     return False
-            # Add more operators as needed (e.g., $ne, $in, etc.)
+            # Handle $in operator
+            elif "$in" in condition:
+                if metadata[key] not in condition["$in"]:
+                    return False
+            # Add more operators as needed (e.g., $ne, etc.)
         
         return True
     

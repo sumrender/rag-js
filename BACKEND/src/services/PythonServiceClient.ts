@@ -126,6 +126,31 @@ export class PythonServiceClient {
     return await response.json() as RetrieveImagesByTextResponse;
   }
 
+  async retrieveImagesByPages(
+    pageNumbers: number[], 
+    fileId?: string, 
+    maxPerPage: number = 3
+  ): Promise<RetrieveImagesByTextResponse> {
+    const response = await fetch(`${this.baseUrl}/retrieve-images-by-pages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        page_numbers: pageNumbers,
+        file_id: fileId,
+        max_per_page: maxPerPage
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Python service page-linked image retrieval failed: ${response.status} ${errorText}`);
+    }
+
+    return await response.json() as RetrieveImagesByTextResponse;
+  }
+
   async embedText(text: string): Promise<number[]> {
     const response = await fetch(`${this.baseUrl}/embed-text`, {
       method: 'POST',

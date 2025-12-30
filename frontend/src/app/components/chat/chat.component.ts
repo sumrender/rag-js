@@ -81,15 +81,41 @@ export class ChatComponent implements OnInit, AfterViewChecked {
     }));
     
     this.apiService.sendMessage(history, this.selectedFileId).subscribe({
-      next: (chunk) => {
-        // If this is the first chunk (isLoading is still true)
-        if (this.isLoading) {
-          this.isLoading = false;
-          // Create the assistant message with the first chunk
-          this.chatService.addMessage('assistant', chunk);
-        } else {
-          // Append subsequent chunks
-          this.chatService.appendToLastMessage(chunk);
+      next: (event) => {
+        if (event.type === 'images') {
+          // Store images for the current assistant message
+          const messages = this.chatService.getMessages();
+          if (messages.length === 0 || messages[messages.length - 1].role !== 'assistant') {
+            // Create assistant message with images but no text yet
+            this.chatService.addMessage('assistant', '', event.data);
+            this.isLoading = false;
+          } else {
+            // Add images to existing assistant message
+            this.chatService.addImagesToLastMessage(event.data);
+          }
+        } else if (event.type === 'text') {
+          const messages = this.chatService.getMessages();
+          const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+          
+          // If this is the first chunk (isLoading is still true)
+          if (this.isLoading) {
+            this.isLoading = false;
+            // If assistant message already exists (from images), update it with text
+            if (lastMessage && lastMessage.role === 'assistant') {
+              this.chatService.updateLastMessage(event.data);
+            } else {
+              // Create new assistant message with the first chunk
+              this.chatService.addMessage('assistant', event.data);
+            }
+          } else {
+            // Append subsequent chunks to existing assistant message
+            if (lastMessage && lastMessage.role === 'assistant') {
+              this.chatService.appendToLastMessage(event.data);
+            } else {
+              // Shouldn't happen, but create message if needed
+              this.chatService.addMessage('assistant', event.data);
+            }
+          }
         }
         this.cdr.detectChanges(); // Force view update
       },

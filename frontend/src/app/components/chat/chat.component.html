@@ -106,7 +106,21 @@
         </div>
         <div class="message-content">
           <div class="message-bubble">
-            {{ message.content }}
+            @if (message.images && message.images.length > 0) {
+              <div class="message-images">
+                @for (image of message.images; track image.imageId) {
+                  <div class="message-image-container">
+                    <img [src]="image.imageUrl" [alt]="'Image from page ' + (image.pageNumber || 'unknown')" class="message-image" />
+                    @if (image.pageNumber) {
+                      <span class="image-caption">Page {{ image.pageNumber }}</span>
+                    }
+                  </div>
+                }
+              </div>
+            }
+            @if (message.content) {
+              <div class="message-text">{{ message.content }}</div>
+            }
           </div>
           <div class="message-time">{{ formatTime(message.timestamp) }}</div>
         </div>

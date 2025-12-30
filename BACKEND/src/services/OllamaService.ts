@@ -56,7 +56,11 @@ export class OllamaService {
       });
 
       for await (const chunk of stream) {
-        yield chunk.response;
+        const response = chunk.response;
+        // Only yield non-empty content to avoid "undefined" in response
+        if (response && response.length > 0) {
+          yield response;
+        }
       }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -73,7 +77,11 @@ export class OllamaService {
       });
 
       for await (const chunk of stream) {
-        yield chunk.message.content;
+        const content = chunk.message.content;
+        // Only yield non-empty content to avoid "undefined" in response
+        if (content && content.length > 0) {
+          yield content;
+        }
       }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);

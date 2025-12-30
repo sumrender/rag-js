@@ -776,12 +776,24 @@ async def ingest_file_background(file_id: str, file_url: str, file_type: Optiona
                             img = extracted_images[i]
                             metadata = {
                                 "fileId": file_id,
-                                "pageNumber": img["page_num"],
+                                "pageNumber": img["page_num"] + 1,  # Convert to 1-indexed to match text chunks
                                 "imageId": img["image_id"],
                                 "imageUrl": img["image_url"]
                             }
                             if img["bbox"]:
                                 metadata["bbox"] = json.dumps(img["bbox"])
+                            
+                            # Add nearbyText from page text (first 500 chars)
+                            if pages is not None:
+                                page_num_1_indexed = img["page_num"] + 1
+                                # Find matching page in pages array
+                                for page in pages:
+                                    if page.get("pageNum") == page_num_1_indexed:
+                                        page_text = page.get("text", "")
+                                        # Cap at 500 characters
+                                        metadata["nearbyText"] = page_text[:500]
+                                        break
+                            
                             image_metadatas.append(metadata)
                         
                         # Upsert to FAISS
@@ -960,11 +972,16 @@ async def retrieve_text(request: RetrieveTextRequest):
             
             for i, doc in enumerate(documents):
                 if doc:
+                    # Convert L2 distance to cosine similarity for normalized embeddings
+                    # For normalized vectors: cosine_similarity = 1 - (squared_L2_distance / 2)
+                    # FAISS IndexFlatL2 returns squared L2 distances
+                    distance = distances[i] if i < len(distances) else 2.0
+                    cosine_similarity = 1.0 - (distance / 2.0)
                     chunk_data = {
                         "id": ids[i] if i < len(ids) else None,
                         "text": doc,
                         "metadata": metadatas[i] if i < len(metadatas) else {},
-                        "score": 1.0 - distances[i] if i < len(distances) else 0.0  # Convert distance to similarity
+                        "score": cosine_similarity
                     }
                     chunks.append(chunk_data)
         
@@ -1033,13 +1050,18 @@ async def retrieve_images_by_text(request: RetrieveImagesByTextRequest):
             for i, doc in enumerate(documents):
                 if doc:
                     metadata = metadatas[i] if i < len(metadatas) else {}
+                    # Convert L2 distance to cosine similarity for normalized embeddings
+                    # For normalized vectors: cosine_similarity = 1 - (squared_L2_distance / 2)
+                    # FAISS IndexFlatL2 returns squared L2 distances
+                    distance = distances[i] if i < len(distances) else 2.0
+                    cosine_similarity = 1.0 - (distance / 2.0)
                     image_data = {
                         "imageId": metadata.get("imageId", ids[i] if i < len(ids) else None),
                         "paintingId": metadata.get("paintingId", metadata.get("imageId")),  # Fallback to imageId if no paintingId
                         "fileId": metadata.get("fileId"),
                         "pageNumber": metadata.get("pageNumber"),
                         "imageUrl": metadata.get("imageUrl"),
-                        "score": 1.0 - distances[i] if i < len(distances) else 0.0,
+                        "score": cosine_similarity,
                         "nearbyText": metadata.get("nearbyText")
                     }
                     images.append(image_data)
@@ -1048,6 +1070,179 @@ async def retrieve_images_by_text(request: RetrieveImagesByTextRequest):
     except Exception as e:
         logger.error(f"Image retrieval failed: {e}")
         raise HTTPException(status_code=500, detail=f"Image retrieval failed: {str(e)}")
+
+
+class RetrieveImagesByPagesRequest(BaseModel):
+    """Request model for retrieve-images-by-pages endpoint"""
+    file_id: Optional[str] = None
+    page_numbers: List[int]  # 1-indexed
+    max_per_page: int = 3
+
+
+@app.post("/retrieve-images-by-pages", response_model=RetrieveImagesByTextResponse)
+async def retrieve_images_by_pages(request: RetrieveImagesByPagesRequest):
+    """
+    Retrieve images by page numbers (deterministic, no similarity search)
+    
+    Args:
+        request: JSON body with page_numbers list, optional file_id, and max_per_page
+    
+    Returns:
+        JSON with images array
+    """
+    try:
+        if not request.page_numbers:
+            return {"images": []}
+        
+        # Query images store - get all images and filter in Python
+        images_store = get_images_store()
+        
+        if images_store.index is None or images_store.index.ntotal == 0:
+            return {"images": []}
+        
+        # Query all images with a dummy embedding (we'll filter by metadata)
+        # Use a large n_results to get all images
+        dummy_embedding = [[0.0] * 512]  # CLIP dimension is 512
+        results = images_store.query(
+            query_embeddings=dummy_embedding,
+            n_results=min(images_store.index.ntotal, 10000),  # Cap at 10k for safety
+            where={"fileId": {"$eq": request.file_id}} if request.file_id else None
+        )
+        
+        # Format results and filter by page numbers
+        images = []
+        page_counts = {page_num: 0 for page_num in request.page_numbers}
+        
+        if results.get("documents") and results["documents"][0]:
+            documents = results["documents"][0]
+            metadatas = results.get("metadatas", [[]])[0] or []
+            ids = results.get("ids", [[]])[0] or []
+            
+            for i, doc in enumerate(documents):
+                if doc:
+                    metadata = metadatas[i] if i < len(metadatas) else {}
+                    page_num = metadata.get("pageNumber")
+                    
+                    # Filter by page numbers
+                    if page_num in request.page_numbers:
+                        # Apply max_per_page limit
+                        if page_counts[page_num] >= request.max_per_page:
+                            continue
+                        
+                        page_counts[page_num] += 1
+                        
+                        image_data = {
+                            "imageId": metadata.get("imageId", ids[i] if i < len(ids) else None),
+                            "paintingId": metadata.get("paintingId", metadata.get("imageId")),
+                            "fileId": metadata.get("fileId"),
+                            "pageNumber": page_num,
+                            "imageUrl": metadata.get("imageUrl"),
+                            "score": 1.0,  # No similarity score for page-linked retrieval
+                            "nearbyText": metadata.get("nearbyText")
+                        }
+                        images.append(image_data)
+        
+        return {"images": images}
+    except Exception as e:
+        logger.error(f"Page-linked image retrieval failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Page-linked image retrieval failed: {str(e)}")
+
+
+@app.post("/reset-store")
+async def reset_store(store_type: str = "all"):
+    """
+    Reset text, image, or all stores (delete FAISS indices and metadata)
+    
+    Args:
+        store_type: "text", "image", or "all" (default: "all")
+    
+    Returns:
+        JSON with success message
+    """
+    global text_store, images_store
+    
+    try:
+        if store_type not in ["text", "image", "all"]:
+            raise HTTPException(status_code=400, detail="store_type must be 'text', 'image', or 'all'")
+        
+        if store_type in ["text", "all"]:
+            store = get_text_store()
+            # Delete files
+            if store.index_path.exists():
+                store.index_path.unlink()
+            if store.metadata_path.exists():
+                store.metadata_path.unlink()
+            if store.documents_path.exists():
+                store.documents_path.unlink()
+            if store.mapping_path.exists():
+                store.mapping_path.unlink()
+            # Reset global variable to force recreation
+            text_store = None
+            logger.info("Text store reset")
+        
+        if store_type in ["image", "all"]:
+            store = get_images_store()
+            # Delete files
+            if store.index_path.exists():
+                store.index_path.unlink()
+            if store.metadata_path.exists():
+                store.metadata_path.unlink()
+            if store.documents_path.exists():
+                store.documents_path.unlink()
+            if store.mapping_path.exists():
+                store.mapping_path.unlink()
+            # Reset global variable to force recreation
+            images_store = None
+            logger.info("Images store reset")
+        
+        return {
+            "message": f"Store(s) reset successfully: {store_type}",
+            "store_type": store_type
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Reset store failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Reset store failed: {str(e)}")
+
+
+@app.get("/store-stats")
+async def get_store_stats():
+    """
+    Return counts and sample metadata for debugging
+    
+    Returns:
+        JSON with store statistics
+    """
+    try:
+        text_store = get_text_store()
+        images_store = get_images_store()
+        
+        text_count = text_store.index.ntotal if text_store.index else 0
+        images_count = images_store.index.ntotal if images_store.index else 0
+        
+        # Get sample metadata (first 2 entries)
+        text_samples = []
+        if text_store.metadata:
+            text_samples = list(text_store.metadata.values())[:2]
+        
+        image_samples = []
+        if images_store.metadata:
+            image_samples = list(images_store.metadata.values())[:2]
+        
+        return {
+            "text_store": {
+                "count": text_count,
+                "sample_metadata": text_samples
+            },
+            "images_store": {
+                "count": images_count,
+                "sample_metadata": image_samples
+            }
+        }
+    except Exception as e:
+        logger.error(f"Get store stats failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Get store stats failed: {str(e)}")
 
 
 if __name__ == "__main__":

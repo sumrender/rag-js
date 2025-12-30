@@ -22,8 +22,12 @@ export function createChatRoutes(container: ServiceContainer): Router {
 
       const stream = container.queryService.askStream(history, fileId);
 
-      for await (const chunk of stream) {
-        res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+      for await (const event of stream) {
+        if (event.type === 'images') {
+          res.write(`data: ${JSON.stringify({ type: 'images', images: event.data })}\n\n`);
+        } else if (event.type === 'text') {
+          res.write(`data: ${JSON.stringify({ type: 'text', chunk: event.data })}\n\n`);
+        }
       }
       
       res.end();

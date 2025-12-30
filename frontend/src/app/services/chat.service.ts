@@ -13,12 +13,13 @@ export class ChatService {
     return this.messagesSubject.value;
   }
 
-  addMessage(role: 'user' | 'assistant', content: string): void {
+  addMessage(role: 'user' | 'assistant', content: string, images?: Array<{imageId: string; imageUrl: string; pageNumber?: number; score: number}>): void {
     const messages = this.messagesSubject.value;
     const newMessage: ChatMessage = {
       role,
       content,
-      timestamp: new Date()
+      timestamp: new Date(),
+      images
     };
     this.messagesSubject.next([...messages, newMessage]);
   }
@@ -42,6 +43,16 @@ export class ChatService {
 
     const lastMessage = messages[messages.length - 1];
     const updatedMessage = { ...lastMessage, content: lastMessage.content + chunk };
+    const newMessages = [...messages.slice(0, -1), updatedMessage];
+    this.messagesSubject.next(newMessages);
+  }
+
+  addImagesToLastMessage(images: Array<{imageId: string; imageUrl: string; pageNumber?: number; score: number}>): void {
+    const messages = this.messagesSubject.value;
+    if (messages.length === 0) return;
+
+    const lastMessage = messages[messages.length - 1];
+    const updatedMessage = { ...lastMessage, images };
     const newMessages = [...messages.slice(0, -1), updatedMessage];
     this.messagesSubject.next(newMessages);
   }

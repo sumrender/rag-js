@@ -84,8 +84,8 @@ export class ApiService {
       .pipe(catchError(this.handleError));
   }
 
-  sendMessage(history: { role: string; content: string }[], fileId?: string): Observable<string> {
-    return new Observable<string>((observer) => {
+  sendMessage(history: { role: string; content: string }[], fileId?: string): Observable<{type: 'text' | 'images', data: any}> {
+    return new Observable<{type: 'text' | 'images', data: any}>((observer) => {
       fetch(`${this.baseUrl}/chat`, {
         method: 'POST',
         headers: {
@@ -123,8 +123,10 @@ export class ApiService {
                 
                 try {
                   const parsed = JSON.parse(data);
-                  if (parsed.chunk) {
-                    observer.next(parsed.chunk);
+                  if (parsed.type === 'images') {
+                    observer.next({ type: 'images', data: parsed.images });
+                  } else if (parsed.type === 'text' || parsed.chunk) {
+                    observer.next({ type: 'text', data: parsed.chunk || parsed.data });
                   }
                 } catch (e) {
                   console.error('Failed to parse SSE data:', e);
