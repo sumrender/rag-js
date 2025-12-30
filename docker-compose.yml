@@ -19,6 +19,21 @@ services:
     volumes:
       - azurite-data:/data
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    command: redis-server --appendonly yes
+
 volumes:
   mongo-data:
   azurite-data:
+  redis-data:

@@ -3,6 +3,7 @@ Python Sidecar Service for Multimodal RAG
 Handles PDF image extraction, text/image embedding generation, FAISS vector storage, and MongoDB status updates
 """
 import base64
+import functools
 import hashlib
 import io
 import json
@@ -25,6 +26,8 @@ from sentence_transformers import SentenceTransformer
 from faiss_store import FAISSStore
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
+from redis_cache import RedisCacheManager
+from semantic_cache import SemanticCache
 
 # Configure logging
 logging.basicConfig(
@@ -56,6 +59,12 @@ images_store: Optional[FAISSStore] = None
 # MongoDB client
 mongo_client: Optional[MongoClient] = None
 mongo_db = None
+
+# Redis cache manager
+cache_manager: Optional[RedisCacheManager] = None
+
+# Semantic cache manager
+semantic_cache: Optional[SemanticCache] = None
 
 
 def get_clip_model() -> SentenceTransformer:
@@ -129,6 +138,83 @@ def get_mongo_db():
     return mongo_db
 
 
+def get_cache_manager() -> Optional[RedisCacheManager]:
+    """Get or create Redis cache manager"""
+    global cache_manager
+    
+    if cache_manager is None:
+        cache_manager = RedisCacheManager()
+    
+    return cache_manager
+
+
+def get_semantic_cache() -> Optional[SemanticCache]:
+    """Get or create semantic cache manager"""
+    global semantic_cache
+    
+    if semantic_cache is None:
+        enabled = os.getenv("SEMANTIC_CACHE_ENABLED", "true").lower() == "true"
+        if not enabled:
+            return None
+        
+        dimension = 384  # all-MiniLM-L6-v2 dimension
+        max_size = int(os.getenv("SEMANTIC_CACHE_MAX_SIZE", "1000"))
+        threshold = float(os.getenv("SEMANTIC_CACHE_THRESHOLD", "0.95"))
+        semantic_cache = SemanticCache(dimension=dimension, max_size=max_size, threshold=threshold)
+        logger.info("Semantic cache initialized")
+    
+    return semantic_cache
+
+
+# Cached embedding functions using LRU cache
+# Get cache size from environment variable, default 1000
+_CACHE_SIZE = int(os.getenv("EMBEDDING_CACHE_SIZE", "1000"))
+
+
+@functools.lru_cache(maxsize=_CACHE_SIZE)
+def _cached_text_embed(text: str) -> tuple:
+    """
+    Generate and cache text embedding (384D)
+    
+    Args:
+        text: Input text string
+    
+    Returns:
+        Tuple representation of embedding vector (for hashability)
+    """
+    model = get_text_model()
+    embedding = model.encode(
+        text,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        show_progress_bar=False
+    )
+    # Convert numpy array to tuple for hashability (required by lru_cache)
+    return tuple(embedding.tolist())
+
+
+@functools.lru_cache(maxsize=_CACHE_SIZE)
+def _cached_clip_embed(text: str) -> tuple:
+    """
+    Generate and cache CLIP text embedding (512D)
+    
+    Args:
+        text: Input text string
+    
+    Returns:
+        Tuple representation of embedding vector (for hashability)
+    """
+    model = get_clip_model()
+    embedding = model.encode(
+        text,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        show_progress_bar=False
+    )
+    # Convert numpy array to tuple for hashability (required by lru_cache)
+    return tuple(embedding.tolist())
+
+
 # Mount static files for image access
 app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
 
@@ -141,6 +227,8 @@ async def startup_event():
         get_text_store()
         get_images_store()
         get_mongo_db()
+        get_cache_manager()
+        get_semantic_cache()
         logger.info("Service startup complete")
     except Exception as e:
         logger.error(f"Failed to initialize services on startup: {e}")
@@ -156,6 +244,7 @@ async def health_check():
         text_store = get_text_store()
         images_store = get_images_store()
         mongo_db = get_mongo_db()
+        
         return {
             "status": "ok",
             "clip_model": clip_model_name,
@@ -469,14 +558,11 @@ async def embed_text(request: EmbedTextRequest):
         JSON with embedding vector
     """
     try:
-        model = get_text_model()
-        embedding = model.encode(
-            request.text,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=False
-        )
-        return {"embedding": embedding.tolist()}
+        # Use cached embedding function
+        embedding_tuple = _cached_text_embed(request.text)
+        # Convert tuple back to list for JSON response
+        embedding = list(embedding_tuple)
+        return {"embedding": embedding}
     except Exception as e:
         logger.error(f"Text embedding failed: {e}")
         raise HTTPException(status_code=500, detail=f"Text embedding failed: {str(e)}")
@@ -823,6 +909,20 @@ async def ingest_file_background(file_id: str, file_url: str, file_type: Optiona
             }
         )
         
+        # Invalidate cache for this file after successful ingestion
+        cache_mgr = get_cache_manager()
+        if cache_mgr:
+            deleted_count = cache_mgr.invalidate_file_cache(file_id)
+            if deleted_count > 0:
+                logger.info(f"Invalidated {deleted_count} Redis cache entries for file_id={file_id}")
+        
+        # Invalidate semantic cache for this file
+        semantic_cache = get_semantic_cache()
+        if semantic_cache:
+            semantic_removed = semantic_cache.invalidate_file(file_id)
+            if semantic_removed > 0:
+                logger.info(f"Invalidated {semantic_removed} semantic cache entries for file_id={file_id}")
+        
         logger.info(f"Ingestion complete for file_id={file_id}, chunks={len(text_chunks)}, images={image_count}")
         if warnings:
             logger.warning(f"Warnings during ingestion: {warnings}")
@@ -938,37 +1038,73 @@ async def retrieve_text(request: RetrieveTextRequest):
         JSON with chunks array and query model name
     """
     try:
-        # Generate query embedding
-        text_model = get_text_model()
-        query_embedding = text_model.encode(
-            request.question,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=False
-        )
+        cache_mgr = get_cache_manager()
         
-        # Query FAISS text store
-        text_store = get_text_store()
-        where_filter = None
-        if request.file_id:
-            where_filter = {"fileId": {"$eq": request.file_id}}
+        # Phase 2.1: Check query results cache first
+        if cache_mgr and os.getenv("ENABLE_QUERY_CACHE", "true").lower() == "true":
+            cached_query_result = cache_mgr.get_query_cache(
+                request.question, 
+                request.file_id, 
+                "text"
+            )
+            if cached_query_result:
+                logger.info(f"Cache HIT for query results: '{request.question[:50]}...'")
+                return {
+                    "chunks": cached_query_result.get("chunks", []),
+                    "queryModel": cached_query_result.get("queryModel", text_model_name)
+                }
         
-        logger.info(f"Querying text store with question: '{request.question[:50]}...', k={request.k}, file_id={request.file_id}")
-        results = text_store.query(
-            query_embeddings=[query_embedding.tolist()],
-            n_results=request.k,
-            where=where_filter
-        )
+        # Generate query embedding using cache
+        embedding_tuple = _cached_text_embed(request.question)
+        # Convert tuple back to numpy array for FAISS query
+        query_embedding = np.array(embedding_tuple, dtype=np.float32)
         
-        logger.info(f"Query returned {len(results.get('documents', [[]])[0]) if results.get('documents') else 0} chunks")
+        # Phase 2.2: Check FAISS results cache
+        faiss_results = None
+        if cache_mgr and os.getenv("ENABLE_FAISS_CACHE", "true").lower() == "true":
+            faiss_results = cache_mgr.get_faiss_cache(
+                query_embedding,
+                request.file_id,
+                request.k,
+                "text"
+            )
+            if faiss_results:
+                logger.info(f"Cache HIT for FAISS results: '{request.question[:50]}...'")
+        
+        # If no FAISS cache hit, perform FAISS query
+        if faiss_results is None:
+            # Query FAISS text store
+            text_store = get_text_store()
+            where_filter = None
+            if request.file_id:
+                where_filter = {"fileId": {"$eq": request.file_id}}
+            
+            logger.info(f"Querying text store with question: '{request.question[:50]}...', k={request.k}, file_id={request.file_id}")
+            faiss_results = text_store.query(
+                query_embeddings=[query_embedding.tolist()],
+                n_results=request.k,
+                where=where_filter
+            )
+            
+            # Cache FAISS results
+            if cache_mgr and os.getenv("ENABLE_FAISS_CACHE", "true").lower() == "true":
+                cache_mgr.set_faiss_cache(
+                    query_embedding,
+                    request.file_id,
+                    request.k,
+                    "text",
+                    faiss_results
+                )
+        
+        logger.info(f"Query returned {len(faiss_results.get('documents', [[]])[0]) if faiss_results.get('documents') else 0} chunks")
         
         # Format results
         chunks = []
-        if results.get("documents") and results["documents"][0]:
-            documents = results["documents"][0]
-            metadatas = results.get("metadatas", [[]])[0] or []
-            distances = results.get("distances", [[]])[0] or []
-            ids = results.get("ids", [[]])[0] or []
+        if faiss_results.get("documents") and faiss_results["documents"][0]:
+            documents = faiss_results["documents"][0]
+            metadatas = faiss_results.get("metadatas", [[]])[0] or []
+            distances = faiss_results.get("distances", [[]])[0] or []
+            ids = faiss_results.get("ids", [[]])[0] or []
             
             for i, doc in enumerate(documents):
                 if doc:
@@ -985,10 +1121,21 @@ async def retrieve_text(request: RetrieveTextRequest):
                     }
                     chunks.append(chunk_data)
         
-        return {
+        result = {
             "chunks": chunks,
             "queryModel": text_model_name
         }
+        
+        # Phase 2.1: Cache query results
+        if cache_mgr and os.getenv("ENABLE_QUERY_CACHE", "true").lower() == "true":
+            cache_mgr.set_query_cache(
+                request.question,
+                request.file_id,
+                "text",
+                result
+            )
+        
+        return result
     except Exception as e:
         logger.error(f"Text retrieval failed: {e}")
         raise HTTPException(status_code=500, detail=f"Text retrieval failed: {str(e)}")
@@ -1018,34 +1165,67 @@ async def retrieve_images_by_text(request: RetrieveImagesByTextRequest):
         JSON with images array
     """
     try:
-        # Generate CLIP text embedding
-        clip_model = get_clip_model()
-        query_embedding = clip_model.encode(
-            request.question,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=False
-        )
+        cache_mgr = get_cache_manager()
         
-        # Query FAISS images store
-        images_store = get_images_store()
-        where_filter = None
-        if request.file_id:
-            where_filter = {"fileId": {"$eq": request.file_id}}
+        # Phase 2.1: Check query results cache first
+        if cache_mgr and os.getenv("ENABLE_QUERY_CACHE", "true").lower() == "true":
+            cached_query_result = cache_mgr.get_query_cache(
+                request.question,
+                request.file_id,
+                "images"
+            )
+            if cached_query_result:
+                logger.info(f"Cache HIT for image query results: '{request.question[:50]}...'")
+                return {"images": cached_query_result.get("images", [])}
         
-        results = images_store.query(
-            query_embeddings=[query_embedding.tolist()],
-            n_results=request.k,
-            where=where_filter
-        )
+        # Generate CLIP text embedding using cache
+        embedding_tuple = _cached_clip_embed(request.question)
+        # Convert tuple back to numpy array for FAISS query
+        query_embedding = np.array(embedding_tuple, dtype=np.float32)
+        
+        # Phase 2.2: Check FAISS results cache
+        faiss_results = None
+        if cache_mgr and os.getenv("ENABLE_FAISS_CACHE", "true").lower() == "true":
+            faiss_results = cache_mgr.get_faiss_cache(
+                query_embedding,
+                request.file_id,
+                request.k,
+                "img"
+            )
+            if faiss_results:
+                logger.info(f"Cache HIT for image FAISS results: '{request.question[:50]}...'")
+        
+        # If no FAISS cache hit, perform FAISS query
+        if faiss_results is None:
+            # Query FAISS images store
+            images_store = get_images_store()
+            where_filter = None
+            if request.file_id:
+                where_filter = {"fileId": {"$eq": request.file_id}}
+            
+            faiss_results = images_store.query(
+                query_embeddings=[query_embedding.tolist()],
+                n_results=request.k,
+                where=where_filter
+            )
+            
+            # Cache FAISS results
+            if cache_mgr and os.getenv("ENABLE_FAISS_CACHE", "true").lower() == "true":
+                cache_mgr.set_faiss_cache(
+                    query_embedding,
+                    request.file_id,
+                    request.k,
+                    "img",
+                    faiss_results
+                )
         
         # Format results
         images = []
-        if results.get("documents") and results["documents"][0]:
-            documents = results["documents"][0]
-            metadatas = results.get("metadatas", [[]])[0] or []
-            distances = results.get("distances", [[]])[0] or []
-            ids = results.get("ids", [[]])[0] or []
+        if faiss_results.get("documents") and faiss_results["documents"][0]:
+            documents = faiss_results["documents"][0]
+            metadatas = faiss_results.get("metadatas", [[]])[0] or []
+            distances = faiss_results.get("distances", [[]])[0] or []
+            ids = faiss_results.get("ids", [[]])[0] or []
             
             for i, doc in enumerate(documents):
                 if doc:
@@ -1066,7 +1246,18 @@ async def retrieve_images_by_text(request: RetrieveImagesByTextRequest):
                     }
                     images.append(image_data)
         
-        return {"images": images}
+        result = {"images": images}
+        
+        # Phase 2.1: Cache query results
+        if cache_mgr and os.getenv("ENABLE_QUERY_CACHE", "true").lower() == "true":
+            cache_mgr.set_query_cache(
+                request.question,
+                request.file_id,
+                "images",
+                result
+            )
+        
+        return result
     except Exception as e:
         logger.error(f"Image retrieval failed: {e}")
         raise HTTPException(status_code=500, detail=f"Image retrieval failed: {str(e)}")
@@ -1195,6 +1386,12 @@ async def reset_store(store_type: str = "all"):
             images_store = None
             logger.info("Images store reset")
         
+        # Invalidate entire cache when stores are reset
+        cache_mgr = get_cache_manager()
+        if cache_mgr and store_type == "all":
+            cache_mgr.invalidate_all_cache()
+            logger.info("Cache invalidated after store reset")
+        
         return {
             "message": f"Store(s) reset successfully: {store_type}",
             "store_type": store_type
@@ -1206,43 +1403,138 @@ async def reset_store(store_type: str = "all"):
         raise HTTPException(status_code=500, detail=f"Reset store failed: {str(e)}")
 
 
-@app.get("/store-stats")
-async def get_store_stats():
+
+# Semantic Cache Endpoints
+
+class SemanticCacheSearchRequest(BaseModel):
+    """Request model for semantic cache search"""
+    query_embedding: List[float]
+    file_id: Optional[str] = None
+
+
+class SemanticCacheSearchResponse(BaseModel):
+    """Response model for semantic cache search"""
+    found: bool
+    response: Optional[str] = None
+    similarity: Optional[float] = None
+    query: Optional[str] = None
+    file_id: Optional[str] = None
+
+
+class SemanticCacheStoreRequest(BaseModel):
+    """Request model for semantic cache store"""
+    query_embedding: List[float]
+    response: str
+    query_text: str = ""
+    file_id: Optional[str] = None
+
+
+class SemanticCacheStoreResponse(BaseModel):
+    """Response model for semantic cache store"""
+    success: bool
+    message: str
+
+
+@app.post("/semantic-cache/search", response_model=SemanticCacheSearchResponse)
+async def semantic_cache_search(request: SemanticCacheSearchRequest):
     """
-    Return counts and sample metadata for debugging
+    Search for similar cached query
+    
+    Args:
+        request: JSON body with query_embedding and optional file_id
     
     Returns:
-        JSON with store statistics
+        Cached response if similarity > threshold, otherwise null
     """
     try:
-        text_store = get_text_store()
-        images_store = get_images_store()
+        cache = get_semantic_cache()
+        if not cache:
+            return SemanticCacheSearchResponse(found=False)
         
-        text_count = text_store.index.ntotal if text_store.index else 0
-        images_count = images_store.index.ntotal if images_store.index else 0
+        result = cache.search(request.query_embedding, request.file_id)
         
-        # Get sample metadata (first 2 entries)
-        text_samples = []
-        if text_store.metadata:
-            text_samples = list(text_store.metadata.values())[:2]
+        if result:
+            return SemanticCacheSearchResponse(
+                found=True,
+                response=result["response"],
+                similarity=result["similarity"],
+                query=result.get("query", ""),
+                file_id=result.get("file_id")
+            )
+        else:
+            return SemanticCacheSearchResponse(found=False)
+            
+    except Exception as e:
+        logger.error(f"Semantic cache search failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Semantic cache search failed: {str(e)}")
+
+
+@app.post("/semantic-cache/store", response_model=SemanticCacheStoreResponse)
+async def semantic_cache_store(request: SemanticCacheStoreRequest):
+    """
+    Store query-response pair in semantic cache
+    
+    Args:
+        request: JSON body with query_embedding, response, query_text, and optional file_id
+    
+    Returns:
+        Success status
+    """
+    try:
+        cache = get_semantic_cache()
+        if not cache:
+            return SemanticCacheStoreResponse(
+                success=False,
+                message="Semantic cache is disabled"
+            )
         
-        image_samples = []
-        if images_store.metadata:
-            image_samples = list(images_store.metadata.values())[:2]
+        success = cache.store(
+            query_embedding=request.query_embedding,
+            response=request.response,
+            query_text=request.query_text,
+            file_id=request.file_id
+        )
         
-        return {
-            "text_store": {
-                "count": text_count,
-                "sample_metadata": text_samples
-            },
-            "images_store": {
-                "count": images_count,
-                "sample_metadata": image_samples
+        if success:
+            return SemanticCacheStoreResponse(
+                success=True,
+                message="Stored in semantic cache"
+            )
+        else:
+            return SemanticCacheStoreResponse(
+                success=False,
+                message="Failed to store in semantic cache"
+            )
+            
+    except Exception as e:
+        logger.error(f"Semantic cache store failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Semantic cache store failed: {str(e)}")
+
+
+@app.post("/semantic-cache/clear")
+async def semantic_cache_clear():
+    """
+    Clear all entries from semantic cache
+    
+    Returns:
+        Success message
+    """
+    try:
+        cache = get_semantic_cache()
+        if not cache:
+            return {
+                "success": False,
+                "message": "Semantic cache is disabled"
             }
+        
+        cache.clear()
+        return {
+            "success": True,
+            "message": "Semantic cache cleared"
         }
     except Exception as e:
-        logger.error(f"Get store stats failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Get store stats failed: {str(e)}")
+        logger.error(f"Clear semantic cache failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Clear semantic cache failed: {str(e)}")
 
 
 if __name__ == "__main__":

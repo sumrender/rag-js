@@ -39,7 +39,17 @@ if ! command -v uvicorn &> /dev/null; then
     exit 1
 fi
 
+# Set Redis environment variables (with defaults)
+export REDIS_HOST=${REDIS_HOST:-localhost}
+export REDIS_PORT=${REDIS_PORT:-6379}
+export REDIS_DB=${REDIS_DB:-0}
+export CACHE_TTL_QUERY_RESULTS=${CACHE_TTL_QUERY_RESULTS:-3600}
+export CACHE_TTL_FAISS_RESULTS=${CACHE_TTL_FAISS_RESULTS:-7200}
+export ENABLE_QUERY_CACHE=${ENABLE_QUERY_CACHE:-true}
+export ENABLE_FAISS_CACHE=${ENABLE_FAISS_CACHE:-true}
+
 # Start uvicorn server
 echo "[PYTHON-API] Starting uvicorn server on http://0.0.0.0:8001..."
+echo "[PYTHON-API] Redis cache: ${REDIS_HOST}:${REDIS_PORT}/${REDIS_DB}"
 uvicorn main:app --reload --host 0.0.0.0 --port 8001 2>&1 | awk '{print "[PYTHON-API] " $0; fflush()}'
 

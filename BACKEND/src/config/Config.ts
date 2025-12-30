@@ -1,4 +1,4 @@
-import { OllamaConfig, ChunkingConfig, RetrievalConfig, AzureConfig, PythonServiceConfig, MultimodalRetrievalConfig } from "../models/index.js";
+import { OllamaConfig, ChunkingConfig, RetrievalConfig, AzureConfig, PythonServiceConfig, MultimodalRetrievalConfig, SemanticCacheConfig } from "../models/index.js";
 
 export class Config {
   public readonly ollama: OllamaConfig;
@@ -7,6 +7,7 @@ export class Config {
   public readonly multimodalRetrieval: MultimodalRetrievalConfig;
   public readonly azure: AzureConfig;
   public readonly pythonService: PythonServiceConfig;
+  public readonly semanticCache: SemanticCacheConfig;
 
   constructor() {
     this.ollama = {
@@ -45,6 +46,11 @@ export class Config {
     };
     this.pythonService = {
       url: process.env.PYTHON_SERVICE_URL ?? "http://localhost:8001"
+    };
+    this.semanticCache = {
+      enabled: process.env.SEMANTIC_CACHE_ENABLED?.toLowerCase() !== "false",
+      similarityThreshold: parseFloat(process.env.SEMANTIC_CACHE_THRESHOLD ?? "0.95"),
+      maxSize: parseInt(process.env.SEMANTIC_CACHE_MAX_SIZE ?? "1000", 10)
     };
     this.multimodalRetrieval = {
       text: {

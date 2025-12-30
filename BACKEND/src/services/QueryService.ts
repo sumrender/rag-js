@@ -2,6 +2,7 @@ import { OllamaService } from "./OllamaService.js";
 import { Config } from "../config/Config.js";
 import { ResultCodes } from "../utils/ResultCodes.js";
 import { PythonServiceClient, TextChunk, ImageResult } from "./PythonServiceClient.js";
+import { SemanticCacheClient } from "./SemanticCacheClient.js";
 
 type QueryType = 'summary' | 'page' | 'source' | 'detail';
 
@@ -24,7 +25,8 @@ export class QueryService {
   constructor(
     private ollamaService: OllamaService,
     private config: Config,
-    private pythonServiceClient: PythonServiceClient
+    private pythonServiceClient: PythonServiceClient,
+    private semanticCacheClient: SemanticCacheClient
   ) {}
 
   private detectQueryType(question: string): QueryAnalysis {
@@ -425,6 +427,22 @@ Answer:
     }
     const question = lastUserMessage.content;
 
+    // Check semantic cache first
+    if (this.config.semanticCache.enabled) {
+      const cached = await this.semanticCacheClient.findSimilar(question, fileId);
+      if (cached && cached.similarity >= this.config.semanticCache.similarityThreshold) {
+        console.log(`[Semantic Cache HIT] Similarity: ${cached.similarity.toFixed(4)}, Query: "${cached.query || question.substring(0, 50)}..."`);
+        // Yield cached response as text chunks (simulate streaming)
+        const responseText = cached.response;
+        // Split into chunks for streaming effect
+        const chunkSize = 50; // characters per chunk
+        for (let i = 0; i < responseText.length; i += chunkSize) {
+          yield { type: 'text', data: responseText.slice(i, i + chunkSize) };
+        }
+        return;
+      }
+    }
+
     const queryAnalysis = this.detectQueryType(question);
     
     // Use multimodal retrieval
@@ -516,9 +534,21 @@ If asked about sources or references, explicitly list the page numbers you used.
       ...history
     ];
 
+    // Collect full response for caching
+    let fullResponse = '';
+
     // Yield text chunks with type
     for await (const textChunk of this.ollamaService.chatStream(messages)) {
+      fullResponse += textChunk;
       yield { type: 'text', data: textChunk };
+    }
+
+    // Store in semantic cache after generation
+    if (this.config.semanticCache.enabled && fullResponse.trim().length > 0) {
+      // Store asynchronously (don't await to avoid blocking response)
+      this.semanticCacheClient.store(question, fullResponse, fileId).catch(err => {
+        console.warn(`Failed to store in semantic cache: ${err}`);
+      });
     }
   }
 }

@@ -8,4 +8,5 @@ python-multipart==0.0.12
 faiss-cpu>=1.7.4
 pymongo>=4.6.0
 httpx>=0.25.0
+redis>=5.0.0
 

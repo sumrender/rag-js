@@ -73,3 +73,9 @@ export interface AzureConfig {
 export interface PythonServiceConfig {
   url: string;
 }
+
+export interface SemanticCacheConfig {
+  enabled: boolean;
+  similarityThreshold: number;
+  maxSize: number;
+}
