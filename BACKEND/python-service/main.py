@@ -152,11 +152,11 @@ def get_semantic_cache() -> Optional[SemanticCache]:
     """Get or create semantic cache manager"""
     global semantic_cache
     
+    # Check master cache flag
+    if os.getenv("ENABLE_CACHE", "false").lower() != "true":
+        return None
+    
     if semantic_cache is None:
-        enabled = os.getenv("SEMANTIC_CACHE_ENABLED", "true").lower() == "true"
-        if not enabled:
-            return None
-        
         dimension = 384  # all-MiniLM-L6-v2 dimension
         max_size = int(os.getenv("SEMANTIC_CACHE_MAX_SIZE", "1000"))
         threshold = float(os.getenv("SEMANTIC_CACHE_THRESHOLD", "0.95"))
@@ -172,9 +172,9 @@ _CACHE_SIZE = int(os.getenv("EMBEDDING_CACHE_SIZE", "1000"))
 
 
 @functools.lru_cache(maxsize=_CACHE_SIZE)
-def _cached_text_embed(text: str) -> tuple:
+def _cached_text_embed_internal(text: str) -> tuple:
     """
-    Generate and cache text embedding (384D)
+    Internal cached text embedding function (384D)
     
     Args:
         text: Input text string
@@ -193,10 +193,37 @@ def _cached_text_embed(text: str) -> tuple:
     return tuple(embedding.tolist())
 
 
-@functools.lru_cache(maxsize=_CACHE_SIZE)
-def _cached_clip_embed(text: str) -> tuple:
+def _cached_text_embed(text: str) -> tuple:
     """
-    Generate and cache CLIP text embedding (512D)
+    Generate and cache text embedding (384D)
+    Checks master cache flag before using LRU cache.
+    
+    Args:
+        text: Input text string
+    
+    Returns:
+        Tuple representation of embedding vector (for hashability)
+    """
+    # Check if caching is enabled
+    if os.getenv("ENABLE_CACHE", "false").lower() != "true":
+        # Generate without caching
+        model = get_text_model()
+        embedding = model.encode(
+            text,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False
+        )
+        return tuple(embedding.tolist())
+    
+    # Use cached version
+    return _cached_text_embed_internal(text)
+
+
+@functools.lru_cache(maxsize=_CACHE_SIZE)
+def _cached_clip_embed_internal(text: str) -> tuple:
+    """
+    Internal cached CLIP text embedding function (512D)
     
     Args:
         text: Input text string
@@ -213,6 +240,33 @@ def _cached_clip_embed(text: str) -> tuple:
     )
     # Convert numpy array to tuple for hashability (required by lru_cache)
     return tuple(embedding.tolist())
+
+
+def _cached_clip_embed(text: str) -> tuple:
+    """
+    Generate and cache CLIP text embedding (512D)
+    Checks master cache flag before using LRU cache.
+    
+    Args:
+        text: Input text string
+    
+    Returns:
+        Tuple representation of embedding vector (for hashability)
+    """
+    # Check if caching is enabled
+    if os.getenv("ENABLE_CACHE", "false").lower() != "true":
+        # Generate without caching
+        model = get_clip_model()
+        embedding = model.encode(
+            text,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False
+        )
+        return tuple(embedding.tolist())
+    
+    # Use cached version
+    return _cached_clip_embed_internal(text)
 
 
 # Mount static files for image access
@@ -1041,7 +1095,7 @@ async def retrieve_text(request: RetrieveTextRequest):
         cache_mgr = get_cache_manager()
         
         # Phase 2.1: Check query results cache first
-        if cache_mgr and os.getenv("ENABLE_QUERY_CACHE", "true").lower() == "true":
+        if cache_mgr:
             cached_query_result = cache_mgr.get_query_cache(
                 request.question, 
                 request.file_id, 
@@ -1061,7 +1115,7 @@ async def retrieve_text(request: RetrieveTextRequest):
         
         # Phase 2.2: Check FAISS results cache
         faiss_results = None
-        if cache_mgr and os.getenv("ENABLE_FAISS_CACHE", "true").lower() == "true":
+        if cache_mgr:
             faiss_results = cache_mgr.get_faiss_cache(
                 query_embedding,
                 request.file_id,
@@ -1087,7 +1141,7 @@ async def retrieve_text(request: RetrieveTextRequest):
             )
             
             # Cache FAISS results
-            if cache_mgr and os.getenv("ENABLE_FAISS_CACHE", "true").lower() == "true":
+            if cache_mgr:
                 cache_mgr.set_faiss_cache(
                     query_embedding,
                     request.file_id,
@@ -1127,7 +1181,7 @@ async def retrieve_text(request: RetrieveTextRequest):
         }
         
         # Phase 2.1: Cache query results
-        if cache_mgr and os.getenv("ENABLE_QUERY_CACHE", "true").lower() == "true":
+        if cache_mgr:
             cache_mgr.set_query_cache(
                 request.question,
                 request.file_id,
@@ -1168,7 +1222,7 @@ async def retrieve_images_by_text(request: RetrieveImagesByTextRequest):
         cache_mgr = get_cache_manager()
         
         # Phase 2.1: Check query results cache first
-        if cache_mgr and os.getenv("ENABLE_QUERY_CACHE", "true").lower() == "true":
+        if cache_mgr:
             cached_query_result = cache_mgr.get_query_cache(
                 request.question,
                 request.file_id,
@@ -1185,7 +1239,7 @@ async def retrieve_images_by_text(request: RetrieveImagesByTextRequest):
         
         # Phase 2.2: Check FAISS results cache
         faiss_results = None
-        if cache_mgr and os.getenv("ENABLE_FAISS_CACHE", "true").lower() == "true":
+        if cache_mgr:
             faiss_results = cache_mgr.get_faiss_cache(
                 query_embedding,
                 request.file_id,
@@ -1210,7 +1264,7 @@ async def retrieve_images_by_text(request: RetrieveImagesByTextRequest):
             )
             
             # Cache FAISS results
-            if cache_mgr and os.getenv("ENABLE_FAISS_CACHE", "true").lower() == "true":
+            if cache_mgr:
                 cache_mgr.set_faiss_cache(
                     query_embedding,
                     request.file_id,
@@ -1249,7 +1303,7 @@ async def retrieve_images_by_text(request: RetrieveImagesByTextRequest):
         result = {"images": images}
         
         # Phase 2.1: Cache query results
-        if cache_mgr and os.getenv("ENABLE_QUERY_CACHE", "true").lower() == "true":
+        if cache_mgr:
             cache_mgr.set_query_cache(
                 request.question,
                 request.file_id,

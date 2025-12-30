@@ -48,7 +48,7 @@ export class Config {
       url: process.env.PYTHON_SERVICE_URL ?? "http://localhost:8001"
     };
     this.semanticCache = {
-      enabled: process.env.SEMANTIC_CACHE_ENABLED?.toLowerCase() !== "false",
+      enabled: process.env.ENABLE_CACHE?.toLowerCase() === "true",
       similarityThreshold: parseFloat(process.env.SEMANTIC_CACHE_THRESHOLD ?? "0.95"),
       maxSize: parseInt(process.env.SEMANTIC_CACHE_MAX_SIZE ?? "1000", 10)
     };

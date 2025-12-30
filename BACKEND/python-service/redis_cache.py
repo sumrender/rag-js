@@ -20,11 +20,11 @@ class RedisCacheManager:
     def __init__(self):
         """Initialize Redis connection with retry logic"""
         self.redis_client: Optional[redis.Redis] = None
-        self.enabled = os.getenv("ENABLE_QUERY_CACHE", "true").lower() == "true" or \
-                      os.getenv("ENABLE_FAISS_CACHE", "true").lower() == "true"
+        # Use master cache flag
+        self.enabled = os.getenv("ENABLE_CACHE", "false").lower() == "true"
         
         if not self.enabled:
-            logger.info("Redis caching is disabled via environment variables")
+            logger.info("Redis caching is disabled via ENABLE_CACHE flag")
             return
         
         self._connect()
