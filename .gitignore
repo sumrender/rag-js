@@ -4,4 +4,4 @@ dist
 BACKEND/python-service/venv
 BACKEND/python-service/images
 BACKEND/python-service/faiss-data
-BACKEND/python-service/__pycache__
+__pycache__/
