@@ -1,6 +1,4 @@
-"""
-Dependency injection for the application's services.
-"""
+
 from functools import lru_cache
 from typing import Optional
 from pymongo import MongoClient
@@ -11,6 +9,8 @@ from ..services.cache_manager import RedisCacheManager, SemanticCache
 from ..services.file_processing_service import FileProcessingService
 from ..services.ingestion_service import IngestionService
 from ..services.retrieval_service import RetrievalService
+from ..services.blob_storage_service import BlobStorageService
+from ..services.query_service import QueryService
 
 @lru_cache(maxsize=1)
 def get_embedding_service() -> EmbeddingService:
@@ -41,6 +41,11 @@ def get_mongo_client() -> MongoClient:
     return MongoClient(settings.MONGO_URI)
 
 @lru_cache(maxsize=1)
+def get_blob_storage_service() -> BlobStorageService:
+    """Get an instance of the BlobStorageService."""
+    return BlobStorageService()
+
+@lru_cache(maxsize=1)
 def get_cache_manager() -> Optional[RedisCacheManager]:
     """Get an instance of the RedisCacheManager."""
     if settings.ENABLE_CACHE:
@@ -57,6 +62,11 @@ def get_semantic_cache() -> Optional[SemanticCache]:
             threshold=settings.SEMANTIC_CACHE_THRESHOLD,
         )
     return None
+
+@lru_cache(maxsize=1)
+def get_query_service() -> QueryService:
+    """Get an instance of the QueryService."""
+    return QueryService(retrieval_service=get_retrieval_service())
 
 @lru_cache(maxsize=1)
 def get_file_processing_service() -> FileProcessingService:

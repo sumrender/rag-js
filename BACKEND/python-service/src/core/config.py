@@ -1,6 +1,4 @@
-"""
-Configuration settings for the Python sidecar service
-"""
+
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
@@ -18,8 +16,12 @@ class Settings(BaseSettings):
     FAISS_DATA_DIR: str = "./faiss-data"
 
     # MongoDB settings
-    MONGO_URI: str = "mongodb://localhost:27017"
+    MONGO_URI: str
     MONGO_DB_NAME: str = "simple-rag"
+
+    # Azure Storage settings
+    AZURE_STORAGE_CONNECTION_STRING: str
+    AZURE_STORAGE_CONTAINER_NAME: str = "files"
 
     # Cache settings
     ENABLE_CACHE: bool = False
