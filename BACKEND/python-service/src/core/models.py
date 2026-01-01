@@ -4,6 +4,16 @@ Pydantic models for API requests and responses.
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 
+class ChatHistoryItem(BaseModel):
+    """Request model for a single chat history item"""
+    role: str
+    content: str
+
+class ChatRequest(BaseModel):
+    """Request model for chat endpoint"""
+    history: List[ChatHistoryItem]
+    fileId: Optional[str] = None
+
 class EmbedImagesBatchRequest(BaseModel):
     """Request model for embed-images-batch endpoint"""
     file_id: str

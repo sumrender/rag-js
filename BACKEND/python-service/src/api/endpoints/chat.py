@@ -1,20 +1,11 @@
 import json
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from typing import List, Optional
+from ..core.models import ChatRequest
 from ..services.query_service import QueryService
 from .dependencies import get_query_service
 
 router = APIRouter()
-
-class ChatHistoryItem(BaseModel):
-    role: str
-    content: str
-
-class ChatRequest(BaseModel):
-    history: List[ChatHistoryItem]
-    fileId: Optional[str] = None
 
 @router.post("/chat")
 async def chat(
