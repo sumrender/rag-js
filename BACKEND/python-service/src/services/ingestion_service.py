@@ -3,6 +3,7 @@ Service for handling file ingestion, text chunking, and vector embedding.
 """
 import asyncio
 import json
+import io
 import logging
 from typing import List, Dict, Any, Optional
 

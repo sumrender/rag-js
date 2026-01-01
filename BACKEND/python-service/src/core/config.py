@@ -41,6 +41,7 @@ class Settings(BaseSettings):
 
     # Server settings
     PORT: int = 8001
+    PY_SERVICE_URL: str = "http://localhost:8001"
 
     # Path settings
     IMAGES_DIR: str = "images"
