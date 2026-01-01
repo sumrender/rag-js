@@ -1,0 +1,13 @@
+fastapi>=0.100.0,<0.111.0
+uvicorn[standard]==0.32.0
+PyMuPDF==1.24.14
+pillow>=10.0.0,<12.0.0
+sentence-transformers==3.3.1
+numpy>=1.24.0,<2.0.0
+python-multipart==0.0.12
+faiss-cpu>=1.7.4
+pymongo>=4.6.0
+httpx>=0.25.0
+redis>=5.0.0
+
+pydantic-settings

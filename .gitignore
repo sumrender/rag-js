@@ -1,3 +1,7 @@
 node_modules
 .env
 dist
+BACKEND/python-service/venv
+BACKEND/python-service/images
+BACKEND/python-service/faiss-data
+__pycache__/

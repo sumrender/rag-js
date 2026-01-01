@@ -1,0 +1,42 @@
+{
+  "name": "simple-rag",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "start": "tsx index.ts",
+    "dev": "tsx watch index.ts",
+    "ingest": "tsx src/services/IngestionService.ts",
+    "build": "tsc",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint *.ts src/**/*.ts",
+    "lint:fix": "eslint *.ts src/**/*.ts --fix"
+  },
+  "dependencies": {
+    "@azure/storage-blob": "^12.29.1",
+    "body-parser": "^2.2.1",
+    "cors": "^2.8.5",
+    "express": "^5.2.1",
+    "mongoose": "^9.0.2",
+    "multer": "^2.0.2",
+    "ollama": "^0.5.0",
+    "pdf-parse": "^2.4.5",
+    "readline-sync": "^1.4.10"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/body-parser": "^1.19.6",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^25.0.1",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/readline-sync": "^1.4.8",
+    "@typescript-eslint/eslint-plugin": "^8.49.0",
+    "@typescript-eslint/parser": "^8.49.0",
+    "eslint": "^9.39.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.49.0"
+  }
+}

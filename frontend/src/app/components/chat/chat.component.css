@@ -218,6 +218,46 @@
   padding: 0 0.5rem;
 }
 
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.message-image-container {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  background: #f7fafc;
+}
+
+.message-image {
+  max-width: 300px;
+  max-height: 300px;
+  width: auto;
+  height: auto;
+  display: block;
+  object-fit: contain;
+}
+
+.image-caption {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.message-text {
+  margin-top: 0.5rem;
+}
+
 .typing-indicator {
   display: flex;
   gap: 0.5rem;
