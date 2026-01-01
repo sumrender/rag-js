@@ -51,5 +51,5 @@ export ENABLE_FAISS_CACHE=${ENABLE_FAISS_CACHE:-true}
 # Start uvicorn server
 echo "[PYTHON-API] Starting uvicorn server on http://0.0.0.0:8001..."
 echo "[PYTHON-API] Redis cache: ${REDIS_HOST}:${REDIS_PORT}/${REDIS_DB}"
-uvicorn main:app --reload --host 0.0.0.0 --port 8001 2>&1 | awk '{print "[PYTHON-API] " $0; fflush()}'
+uvicorn src.main:app --reload --host 0.0.0.0 --port 8001 2>&1 | awk '{print "[PYTHON-API] " $0; fflush()}'
 
