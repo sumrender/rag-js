@@ -39,6 +39,12 @@ if ! command -v uvicorn &> /dev/null; then
     exit 1
 fi
 
+# Load environment variables from .env file
+if [ -f ".env" ]; then
+    echo "[PYTHON-API] Loading environment variables from .env file..."
+    export $(cat .env | xargs)
+fi
+
 # Set Redis environment variables (with defaults)
 export REDIS_HOST=${REDIS_HOST:-localhost}
 export REDIS_PORT=${REDIS_PORT:-6379}
@@ -52,4 +58,3 @@ export ENABLE_FAISS_CACHE=${ENABLE_FAISS_CACHE:-true}
 echo "[PYTHON-API] Starting uvicorn server on http://0.0.0.0:8001..."
 echo "[PYTHON-API] Redis cache: ${REDIS_HOST}:${REDIS_PORT}/${REDIS_DB}"
 uvicorn src.main:app --reload --host 0.0.0.0 --port 8001 2>&1 | awk '{print "[PYTHON-API] " $0; fflush()}'
-

@@ -1,6 +1,4 @@
-"""
-Service for handling file ingestion, text chunking, and vector embedding.
-"""
+
 import asyncio
 import json
 import io
@@ -43,6 +41,45 @@ class IngestionService:
         self.cache_manager = cache_manager
         self.semantic_cache = semantic_cache
         self.file_processing_service = file_processing_service
+
+    def get_all_files(self) -> List[Dict[str, Any]]:
+        """Retrieve all file metadata from the database."""
+        files = self.mongo_db.filemetadatas.find()
+        return [{
+            "id": file["id"],
+            "name": file["name"],
+            "type": file["type"],
+            "createdOn": file["createdOn"],
+            "path": file["path"],
+            "file_url": file["file_url"],
+            "readyForChatting": file["readyForChatting"]
+        } for file in files]
+
+    def create_file_metadata(self, file_id: str, name: str, file_type: str, created_on: str, path: str, file_url: str):
+        """Create a new file metadata record in the database."""
+        file_metadata = {
+            "id": file_id,
+            "name": name,
+            "type": file_type,
+            "createdOn": created_on,
+            "path": path,
+            "file_url": file_url,
+            "readyForChatting": False
+        }
+        self.mongo_db.filemetadatas.insert_one(file_metadata)
+
+    async def poll_ingestion_status(self, file_id: str, timeout: int = 300):
+        """Poll the ingestion status for a given file ID."""
+        start_time = asyncio.get_event_loop().time()
+        while (asyncio.get_event_loop().time() - start_time) < timeout:
+            status = self.mongo_db.filemetadatas.find_one({"id": file_id})
+            if status:
+                yield status
+                if status.get("readyForChatting") or status.get("lastError"):
+                    break
+            await asyncio.sleep(2)
+        else:
+            yield {"error": "Ingestion polling timed out."}
 
     async def ingest_file(self, file_id: str, file_url: str, file_type: Optional[str] = None):
         """Background job for file ingestion"""
